@@ -1,22 +1,30 @@
+from pymongo import MongoClient
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, scoped_session
+import os
 
-# Update the connection URL to use MySQL
-# Format: "mysql+pymysql://<username>:<password>@<host>/<database_name>"
-SQLALCHEMY_DATABASE_URL = "mysql+pymysql://admin:admin@localhost/attendance_db"
+# ✅ MySQL Configuration (Users & Admin Data)
+# MYSQL_DB_URL = os.getenv("MYSQL_DB_URL", "mysql+pymysql://user:password@mysql_host/dseu_main")
+# mysql_engine = create_engine(MYSQL_DB_URL, pool_recycle=3600)
+# SQLSessionLocal = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=mysql_engine))
 
-# Create the engine
-engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
+# def get_mysql_db():
+#     """Dependency to get MySQL session."""
+#     db = SQLSessionLocal()
+#     try:
+#         yield db
+#     finally:
+#         db.close()
 
-# Session and Base setup
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# ✅ MongoDB Configuration (Primary Storage for Attendance & Inventory)
+MONGO_DB_URL = os.getenv("MONGO_DB_URL", "mongodb://localhost:27017")
+mongo_client = MongoClient(MONGO_DB_URL)
+mongo_db = mongo_client["dseu_main"]  # Use `dseu_main` database
 
-# Dependency for database session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+def get_mongo_db():
+    """Returns the MongoDB database connection."""
+    return mongo_db
+
+def get_mongo_collection(collection_name):
+    """Returns a specific MongoDB collection."""
+    return mongo_db[collection_name]

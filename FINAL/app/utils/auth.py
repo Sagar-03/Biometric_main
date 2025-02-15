@@ -8,10 +8,8 @@ from jose import jwt, JWTError
 from fastapi import HTTPException, status, Depends
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from sqlalchemy.orm import Session
 from shapely.geometry import Point, Polygon
-from ..models import User
-from ..database import get_db
+from ..database import get_mongo_db
 from fastapi.security import OAuth2PasswordBearer
 
 # ✅ Security & JWT Configuration
@@ -109,8 +107,8 @@ def create_access_token(data: dict):
 # ------------------------------------------
 # ✅ AUTHENTICATION: GET CURRENT USER FROM JWT
 # ------------------------------------------
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    """Extract and validate user from JWT token."""
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    """Extract and validate user from JWT token (MongoDB version)."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -125,18 +123,21 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except JWTError:
         raise credentials_exception
 
-    user = db.query(User).filter(User.email == email).first()
-    if user is None:
+    mongo_db = get_mongo_db()
+    user = mongo_db["users"].find_one({"email": email})
+
+    if not user:
         raise credentials_exception
+
     return user
 
 # ------------------------------------------
 # ✅ ROLE-BASED ACCESS CONTROL
 # ------------------------------------------
 def role_required(required_roles: list):
-    """Restrict access based on user roles."""
+    """Restrict access based on user roles (MongoDB version)."""
     def role_checker(current_user=Depends(get_current_user)):
-        if current_user.role not in required_roles:
+        if current_user.get("role") not in required_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have the required permissions."

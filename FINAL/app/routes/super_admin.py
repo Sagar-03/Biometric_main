@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 from fastapi.responses import StreamingResponse
+from pymongo import MongoClient
+from bson import ObjectId
+from datetime import datetime, timedelta
 from ..utils.auth import role_required, get_current_user
-from ..database import get_db
-from ..models import User, Attendance, Campus, Leave
+from ..database import get_mongo_db
 
 router = APIRouter()
 
@@ -12,22 +13,22 @@ router = APIRouter()
 # ------------------------------------------
 @router.get("/attendance/campus/{campus_id}", dependencies=[Depends(role_required(["super_admin"]))])
 async def view_campus_attendance(
-    campus_id: int,
-    db: Session = Depends(get_db)
+    campus_id: str,
+    db: MongoClient = Depends(get_mongo_db)
 ):
-    """Fetch attendance for a specific campus"""
-    attendance = db.query(Attendance).filter(Attendance.punch_in_campus_id == campus_id).all()
+    """Fetch attendance records for a specific campus"""
+    attendance_records = db["attendance"].find({"campus_id": campus_id})
 
     return [
         {
-            "employee_id": record.user_id,
-            "name": record.user.full_name,
-            "punch_in": record.punch_in,
-            "punch_out": record.punch_out,
-            "total_hours": record.total_hours,
-            "status": record.status
+            "employee_id": record["user_id"],
+            "name": record.get("name"),
+            "punch_in": record.get("punch_in"),
+            "punch_out": record.get("punch_out"),
+            "total_hours": record.get("total_hours"),
+            "status": record.get("status")
         }
-        for record in attendance
+        for record in attendance_records
     ]
 
 # ------------------------------------------
@@ -35,23 +36,25 @@ async def view_campus_attendance(
 # ------------------------------------------
 @router.get("/attendance/daily-geofencing/campus/{campus_id}")
 async def daily_geofencing_report(
-    campus_id: int,
-    db: Session = Depends(get_db)
+    campus_id: str,
+    db: MongoClient = Depends(get_mongo_db)
 ):
     """Fetch geofencing violations for today for a specific campus"""
-    today = datetime.now().date()
-    offenders = db.query(Attendance).filter(
-        Attendance.date == today,
-        Attendance.total_out_of_bounds_time > 30,
-        Attendance.punch_in_campus_id == campus_id
-    ).all()
+    today = datetime.utcnow().date()
+
+    offenders = db["attendance"].find({
+        "date": today,
+        "total_out_of_bounds_time": {"$gt": 30},
+        "campus_id": campus_id
+    })
 
     return [
         {
-            "employee_id": record.user_id,
-            "name": record.user.full_name,
-            "total_out_of_bounds_time": record.total_out_of_bounds_time
-        } for record in offenders
+            "employee_id": record["user_id"],
+            "name": record.get("name"),
+            "total_out_of_bounds_time": record.get("total_out_of_bounds_time")
+        }
+        for record in offenders
     ]
 
 # ------------------------------------------
@@ -59,26 +62,26 @@ async def daily_geofencing_report(
 # ------------------------------------------
 @router.get("/attendance/weekly-geofencing/campus/{campus_id}")
 async def weekly_geofencing_report(
-    campus_id: int,
-    db: Session = Depends(get_db)
+    campus_id: str,
+    db: MongoClient = Depends(get_mongo_db)
 ):
     """Fetch weekly geofencing violations for a specific campus"""
-    today = datetime.now().date()
+    today = datetime.utcnow().date()
     start_of_week = today - timedelta(days=today.weekday())
 
-    offenders = db.query(Attendance).filter(
-        Attendance.date >= start_of_week,
-        Attendance.date <= today,
-        Attendance.total_out_of_bounds_time > 30,
-        Attendance.punch_in_campus_id == campus_id
-    ).all()
+    offenders = db["attendance"].find({
+        "date": {"$gte": start_of_week, "$lte": today},
+        "total_out_of_bounds_time": {"$gt": 30},
+        "campus_id": campus_id
+    })
 
     return [
         {
-            "employee_id": record.user_id,
-            "name": record.user.full_name,
-            "total_out_of_bounds_time": record.total_out_of_bounds_time
-        } for record in offenders
+            "employee_id": record["user_id"],
+            "name": record.get("name"),
+            "total_out_of_bounds_time": record.get("total_out_of_bounds_time")
+        }
+        for record in offenders
     ]
 
 # ------------------------------------------
@@ -86,137 +89,118 @@ async def weekly_geofencing_report(
 # ------------------------------------------
 @router.get("/leave-requests", dependencies=[Depends(role_required(["super_admin"]))])
 async def get_leave_requests(
-    db: Session = Depends(get_db)
+    db: MongoClient = Depends(get_mongo_db)
 ):
     """Fetch all pending leave requests for Admins (HR or Directors)."""
-    leave_requests = db.query(Leave).filter(
-        Leave.status == "Pending",
-        Leave.user.role == "admin"
-    ).all()
+    leave_requests = db["leave_requests"].find({"status": "Pending", "role": "admin"})
 
     return [
         {
-            "id": leave.id,
-            "employee_id": leave.user_id,
-            "name": leave.user.full_name,
-            "leave_type": leave.leave_type,
-            "start_date": leave.start_date,
-            "end_date": leave.end_date,
-            "reason": leave.reason,
-            "status": leave.status
+            "id": str(leave["_id"]),
+            "employee_id": leave["user_id"],
+            "name": leave.get("name"),
+            "leave_type": leave.get("leave_type"),
+            "start_date": leave.get("start_date"),
+            "end_date": leave.get("end_date"),
+            "reason": leave.get("reason"),
+            "status": leave.get("status")
         }
         for leave in leave_requests
     ]
 
 @router.post("/leave-requests/{leave_id}/approve")
 async def approve_leave_request(
-    leave_id: int, 
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    leave_id: str, 
+    db: MongoClient = Depends(get_mongo_db), 
+    current_user: dict = Depends(get_current_user)
 ):
     """Approve an Admin-level leave request."""
-    leave = db.query(Leave).filter(Leave.id == leave_id).first()
-    
-    if not leave:
+    result = db["leave_requests"].update_one(
+        {"_id": ObjectId(leave_id)},
+        {"$set": {"status": "Approved"}}
+    )
+
+    if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Leave request not found.")
 
-    leave.status = "Approved"
-    db.commit()
-    
     return {"message": "Leave request approved successfully"}
 
 @router.post("/leave-requests/{leave_id}/reject")
 async def reject_leave_request(
-    leave_id: int, 
+    leave_id: str, 
     reason: str, 
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    db: MongoClient = Depends(get_mongo_db), 
+    current_user: dict = Depends(get_current_user)
 ):
     """Reject an Admin-level leave request with a reason."""
-    leave = db.query(Leave).filter(Leave.id == leave_id).first()
-    
-    if not leave:
+    result = db["leave_requests"].update_one(
+        {"_id": ObjectId(leave_id)},
+        {"$set": {"status": "Rejected", "rejection_reason": reason}}
+    )
+
+    if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Leave request not found.")
 
-    leave.status = "Rejected"
-    db.commit()
-    
     return {"message": f"Leave request rejected. Reason: {reason}"}
 
 # ------------------------------------------
-# ✅ VIEW, CREATE, UPDATE, DELETE CAMPUSES
+# ✅ CCTV CAMERA STREAMING (Super Admin)
 # ------------------------------------------
-@router.get("/campuses", dependencies=[Depends(role_required(["super_admin"]))])
-async def get_all_campuses(db: Session = Depends(get_db)):
-    """Fetch all campuses"""
-    campuses = db.query(Campus).all()
+@router.get("/cctv/live/{campus_id}")
+async def stream_cctv(
+    campus_id: str, 
+    db: MongoClient = Depends(get_mongo_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Stream live CCTV footage for a specific campus (Super Admin Only)"""
+
+    campus = db["campuses"].find_one({"_id": ObjectId(campus_id)})
+
+    if not campus:
+        raise HTTPException(status_code=404, detail="Campus not found.")
+
+    # Placeholder logic: Replace with actual CCTV streaming URL
+    cctv_stream_url = f"http://cctv.dseu.ac.in/live/{campus_id}"
     
+    return {"campus": campus["name"], "stream_url": cctv_stream_url}
+
+# ------------------------------------------
+# ✅ VIEW CAMPUS INVENTORY (Super Admin)
+# ------------------------------------------
+@router.get("/inventory/campus/{campus_id}", dependencies=[Depends(role_required(["super_admin"]))])
+async def get_inventory_for_campus(
+    campus_id: str, db: MongoClient = Depends(get_mongo_db)
+):
+    """View all inventory items for a specific campus"""
+    inventory = db["inventory"].find({"campus_id": campus_id})
+
     return [
         {
-            "id": campus.id,
-            "name": campus.name,
-            "geo_boundary": campus.geo_boundary
-        } for campus in campuses
+            "id": str(item["_id"]),
+            "name": item["name"],
+            "category": item["category"],
+            "quantity": item["quantity"]
+        }
+        for item in inventory
     ]
 
-@router.post("/campuses", dependencies=[Depends(role_required(["super_admin"]))])
-async def create_campus(campus_data: dict, db: Session = Depends(get_db)):
-    """Create a new campus"""
-    new_campus = Campus(**campus_data)
-    db.add(new_campus)
-    db.commit()
-    
-    return {"message": "Campus created successfully"}
-
-@router.put("/campuses/{campus_id}", dependencies=[Depends(role_required(["super_admin"]))])
-async def update_campus(campus_id: int, campus_data: dict, db: Session = Depends(get_db)):
-    """Update an existing campus"""
-    campus = db.query(Campus).filter(Campus.id == campus_id).first()
-    
-    if not campus:
-        raise HTTPException(status_code=404, detail="Campus not found.")
-
-    for key, value in campus_data.items():
-        setattr(campus, key, value)
-    
-    db.commit()
-    return {"message": "Campus updated successfully"}
-
-@router.delete("/campuses/{campus_id}", dependencies=[Depends(role_required(["super_admin"]))])
-async def delete_campus(campus_id: int, db: Session = Depends(get_db)):
-    """Delete a campus"""
-    campus = db.query(Campus).filter(Campus.id == campus_id).first()
-    
-    if not campus:
-        raise HTTPException(status_code=404, detail="Campus not found.")
-
-    db.delete(campus)
-    db.commit()
-    
-    return {"message": "Campus deleted successfully"}
-
 # ------------------------------------------
-# ✅ SUPER ADMIN: ISSUE RED NOTICE
+# ✅ VIEW INVENTORY REQUESTS (Super Admin)
 # ------------------------------------------
-@router.post("/attendance/red-notice/{user_id}")
-async def issue_red_notice(
-    user_id: int, 
-    reason: str, 
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+@router.get("/inventory/requests", dependencies=[Depends(role_required(["super_admin"]))])
+async def get_inventory_requests(
+    db: MongoClient = Depends(get_mongo_db)
 ):
-    """Issues a red notice for repeated geofencing violations (campus-wise)."""
-    user_attendance = db.query(Attendance).filter(
-        Attendance.user_id == user_id,
-        Attendance.total_out_of_bounds_time > 30
-    ).count()
+    """Super Admin can view all inventory requests across campuses"""
+    requests = db["inventory_requests"].find()
 
-    if user_attendance >= 5:  # If violations occurred for 5+ days
-        user = db.query(User).filter(User.id == user_id).first()
-        if user:
-            user.red_notice_issued = True
-            user.red_notice_reason = reason
-            db.commit()
-            return {"message": f"Red notice issued to {user.full_name} for repeated geofencing violations."}
-
-    return {"message": "User does not meet red notice criteria yet."}
+    return [
+        {
+            "id": str(req["_id"]),
+            "item_name": req["item_name"],
+            "requested_by": req["requested_by"],
+            "requested_quantity": req["requested_quantity"],
+            "status": req["status"]
+        }
+        for req in requests
+    ]
