@@ -5,33 +5,15 @@ import pytz
 from shapely.geometry import Point, Polygon
 from sqlalchemy.sql import func
 from fastapi.responses import StreamingResponse
-from ..utils.auth import get_current_user ,check_within_geofence
-from ..database import get_db
-from ..models import Attendance, Campus, User
-
-router = APIRouter()
-
-# Helper function: Check if location is within geofence
-# def check_within_geofence(lat, lng, geo_boundary):
-#     boundary_points = [tuple(map(float, coord.split(','))) for coord in geo_boundary.split(';')]
-#     polygon = Polygon(boundary_points)
-#     point = Point(lat, lng)
-#     return polygon.contains(point)
-
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
-import pytz
-from sqlalchemy.sql import func
-from fastapi.responses import StreamingResponse
-from shapely.geometry import Point, Polygon
 from ..utils.auth import get_current_user, check_within_geofence
 from ..database import get_db
 from ..models import Attendance, Campus, User
 
 router = APIRouter()
 
-
+# ------------------------------------------
+# ✅ PUNCH-IN API (With Geofencing)
+# ------------------------------------------
 @router.post("/attendance/punch-in")
 async def punch_in(
     latitude: float,
@@ -61,7 +43,9 @@ async def punch_in(
                 user_id=current_user.id,
                 punch_in=datetime.now(pytz.UTC),
                 punch_in_campus_id=campus.id,
-                status="Present"
+                status="Present",
+                total_out_of_bounds_time=0,  # Reset out-of-campus tracking
+                exit_time=None
             )
             db.add(attendance)
             db.commit()
@@ -72,7 +56,9 @@ async def punch_in(
         detail="Punch-in location outside campus geofence"
     )
 
-
+# ------------------------------------------
+# ✅ PUNCH-OUT API (With Geofencing)
+# ------------------------------------------
 @router.post("/attendance/punch-out")
 async def punch_out(
     latitude: float,
@@ -111,6 +97,7 @@ async def punch_out(
             return {
                 "message": f"Punched out at {campus.name}",
                 "total_hours": attendance.total_hours,
+                "total_out_of_bounds_time": attendance.total_out_of_bounds_time,
                 "status": "success"
             }
 
@@ -119,127 +106,137 @@ async def punch_out(
         detail="Punch-out location outside campus geofence"
     )
 
-
-@router.get("/attendance/daily-status")
-async def get_daily_status(
+# ------------------------------------------
+# ✅ GEOLOCATION CHECK API (Runs Every 5 Min)
+# ✅ Tracks Faculty If They Leave The Campus
+# ------------------------------------------
+@router.post("/attendance/check-location")
+async def track_user_location(
+    latitude: float,
+    longitude: float,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     today = datetime.now(pytz.UTC).date()
+
+    # Check for active attendance record
     attendance = db.query(Attendance).filter(
         Attendance.user_id == current_user.id,
-        func.date(Attendance.date) == today
+        func.date(Attendance.date) == today,
+        Attendance.punch_out == None
     ).first()
 
     if not attendance:
-        return {"status": "Absent"}
+        raise HTTPException(status_code=400, detail="No active punch-in session found.")
 
-    return {
-        "date": today,
-        "punch_in": attendance.punch_in,
-        "punch_out": attendance.punch_out,
-        "total_hours": attendance.total_hours,
-        "status": attendance.status
-    }
+    # Identify faculty's campus
+    campus = db.query(Campus).filter(Campus.id == attendance.punch_in_campus_id).first()
 
-@router.get("/attendance/weekly-status")
-async def get_weekly_status(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    if not check_within_geofence(latitude, longitude, campus.geo_boundary):
+        if attendance.exit_time is None:
+            attendance.exit_time = datetime.utcnow()  # Mark initial exit time
+
+        # Calculate total time outside campus
+        time_outside = (datetime.utcnow() - attendance.exit_time).total_seconds() / 60  # Convert to minutes
+        if time_outside >= 30:
+            attendance.total_out_of_bounds_time += time_outside
+            attendance.exit_time = datetime.utcnow()  # Reset exit time
+
+    else:
+        attendance.exit_time = None  # Reset if user returns inside
+
+    db.commit()
+
+    # 🚨 Notify If Faculty Is Out for More Than 30 Min
+    if attendance.total_out_of_bounds_time > 30:
+        return {"warning": f"You have been outside the campus for {attendance.total_out_of_bounds_time} minutes today."}
+
+    return {"status": "Tracking active"}
+
+# ------------------------------------------
+# ✅ ADMIN/SUPERADMIN: GET DAILY GEO TRACKING DATA
+# ------------------------------------------
+@router.get("/attendance/daily-geofencing")
+async def daily_geofencing_data(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
+    """Fetches a list of employees who violated geofencing today."""
+    today = datetime.now(pytz.UTC).date()
+    query = db.query(Attendance).filter(
+        func.date(Attendance.date) == today,
+        Attendance.total_out_of_bounds_time > 30  # Employees who went out for more than 30 mins
+    )
+
+    if current_user.role == "admin":
+        query = query.filter(Attendance.punch_in_campus_id == current_user.campus_id)
+
+    offenders = query.all()
+    
+    return [
+        {
+            "employee_id": record.user_id,
+            "name": record.user.full_name,
+            "total_out_of_bounds_time": record.total_out_of_bounds_time
+        } for record in offenders
+    ]
+
+# ------------------------------------------
+# ✅ ADMIN/SUPERADMIN: WEEKLY GEO TRACKING REPORT
+# ------------------------------------------
+@router.get("/attendance/weekly-geofencing")
+async def weekly_geofencing_report(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Fetches a weekly report of geofencing violations."""
     today = datetime.now(pytz.UTC).date()
     start_of_week = today - timedelta(days=today.weekday())
 
-    weekly_records = db.query(Attendance).filter(
-        Attendance.user_id == current_user.id,
+    query = db.query(Attendance).filter(
         Attendance.date >= start_of_week,
-        Attendance.date <= today
-    ).all()
+        Attendance.date <= today,
+        Attendance.total_out_of_bounds_time > 30
+    )
 
-    weekly_data = []
-    for record in weekly_records:
-        weekly_data.append({
-            "date": record.date,
-            "punch_in": record.punch_in,
-            "punch_out": record.punch_out,
-            "total_hours": record.total_hours,
-            "status": record.status
-        })
+    if current_user.role == "admin":
+        query = query.filter(Attendance.punch_in_campus_id == current_user.campus_id)
 
-    return {
-        "start_of_week": start_of_week,
-        "end_of_week": today,
-        "records": weekly_data
-    }
+    offenders = query.all()
 
-@router.get("/attendance/progress")
-async def get_progress(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    return [
+        {
+            "employee_id": record.user_id,
+            "name": record.user.full_name,
+            "total_out_of_bounds_time": record.total_out_of_bounds_time
+        } for record in offenders
+    ]
+
+# ------------------------------------------
+# ✅ SUPERADMIN: ISSUE RED NOTICE FOR REPEATED VIOLATIONS
+# ------------------------------------------
+@router.post("/attendance/red-notice/{user_id}")
+async def issue_red_notice(
+    user_id: int,
+    reason: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
-    today = datetime.now(pytz.UTC).date()
-    start_of_week = today - timedelta(days=today.weekday())
+    """Issues a red notice if a user repeatedly violates geofencing rules."""
+    if current_user.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Unauthorized action.")
 
-    # Fetch today's attendance
-    today_record = db.query(Attendance).filter(
-        Attendance.user_id == current_user.id,
-        func.date(Attendance.date) == today
-    ).first()
+    user_attendance = db.query(Attendance).filter(
+        Attendance.user_id == user_id,
+        Attendance.total_out_of_bounds_time > 30
+    ).count()
 
-    # Fetch weekly attendance
-    weekly_records = db.query(Attendance).filter(
-        Attendance.user_id == current_user.id,
-        Attendance.date >= start_of_week,
-        Attendance.date <= today
-    ).all()
+    if user_attendance >= 5:  # If violations occurred for 5+ days
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.red_notice_issued = True
+            user.red_notice_reason = reason
+            db.commit()
+            return {"message": f"Red notice issued to {user.full_name} for repeated geofencing violations."}
 
-    # Daily progress
-    daily_hours = (
-        (today_record.punch_out - today_record.punch_in).total_seconds() / 3600
-        if today_record and today_record.punch_in and today_record.punch_out
-        else 0
-    )
-    remaining_daily = max(0, 8 - daily_hours)
-
-    # Weekly progress
-    total_weekly_hours = sum(
-        (record.punch_out - record.punch_in).total_seconds() / 3600
-        for record in weekly_records
-        if record.punch_in and record.punch_out
-    )
-    remaining_weekly = max(0, 40 - total_weekly_hours)
-
-    return {
-        "daily": {
-            "completed_hours": daily_hours,
-            "remaining_hours": remaining_daily,
-        },
-        "weekly": {
-            "completed_hours": total_weekly_hours,
-            "remaining_hours": remaining_weekly,
-        },
-    }
-
-@router.get("/attendance/download-report")
-async def download_report(
-    start_date: datetime,
-    end_date: datetime,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    records = db.query(Attendance).filter(
-        Attendance.user_id == current_user.id,
-        Attendance.date >= start_date,
-        Attendance.date <= end_date
-    ).all()
-
-    def generate_csv():
-        yield "Date,Punch In,Punch Out,Hours Worked,Status\n"
-        for record in records:
-            yield f"{record.date},{record.punch_in},{record.punch_out},{record.total_hours},{record.status}\n"
-
-    return StreamingResponse(
-        generate_csv(),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=attendance_report.csv"}
-    )
+    return {"message": "User does not meet red notice criteria yet."}

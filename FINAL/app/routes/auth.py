@@ -2,100 +2,130 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 import pyotp
+import re
 from ..utils.auth import (
     verify_password,
     get_password_hash,
-    send_otp_email
+    send_otp_email,
+    create_access_token,
+    assign_role
 )
 from ..database import get_db
 from ..models import User
 
 router = APIRouter()
 
-@router.post("/forgot-password")
-async def forgot_password(employee_id: str, email: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(
-        User.employee_id == employee_id, User.email == email
-    ).first()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Employee ID and email combination not found"
-        )
+# ✅ Strong Password Rules
+PASSWORD_REGEX = r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@#$%^&+=]).{6,}$"
+
+# ------------------------------------------
+# ✅ SIGNUP API (Step 1: Send OTP)
+# ------------------------------------------
+@router.post("/signup")
+async def signup(email: str, password: str, db: Session = Depends(get_db)):
+    role = assign_role(email)
+    if role is None:
+        raise HTTPException(status_code=400, detail="Invalid email. Use a valid @dseu.ac.in email.")
+
+    if not re.match(PASSWORD_REGEX, password):
+        raise HTTPException(status_code=400, detail="Password must meet security requirements.")
+
+    existing_user = db.query(User).filter(User.email == email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered.")
 
     secret = pyotp.random_base32()
-    totp = pyotp.TOTP(secret, interval=900)
-    otp = totp.now()
+    otp = pyotp.TOTP(secret, interval=900).now()
+    
+    send_otp_email(email, otp)
 
-    user.reset_token = secret
-    user.reset_token_expires = datetime.utcnow() + timedelta(minutes=15)
+    new_user = User(
+        email=email,
+        hashed_password=get_password_hash(password),
+        otp_secret=secret,
+        otp_expires=datetime.utcnow() + timedelta(minutes=15),
+        role=role
+    )
+    db.add(new_user)
     db.commit()
 
-    try:
-        send_otp_email(email, otp)
-    except Exception:
-        user.reset_token = None
-        user.reset_token_expires = None
-        db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to send OTP email"
-        )
+    return {"message": "OTP sent to email. Please verify."}
 
-    return {"message": "OTP sent to your email"}
+# ------------------------------------------
+# ✅ LOGIN API
+# ------------------------------------------
+@router.post("/login")
+async def login(email: str, password: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not verify_password(password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Invalid email or password.")
 
-@router.post("/verify-otp")
-async def verify_otp(employee_id: str, email: str, otp: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(
-        User.employee_id == employee_id, User.email == email
-    ).first()
+    access_token = create_access_token({"sub": user.email, "role": user.role})
+    return {"access_token": access_token, "token_type": "bearer", "role": user.role}
 
-    if not user or not user.reset_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid reset request"
-        )
+# ------------------------------------------
+# ✅ FORGOT PASSWORD (Step 1: Send OTP)
+# ------------------------------------------
+@router.post("/forgot-password")
+async def forgot_password(email: str, db: Session = Depends(get_db)):
+    """Sends an OTP to the user for password reset."""
+    if not assign_role(email):
+        raise HTTPException(status_code=400, detail="Invalid email. Use an @dseu.ac.in email.")
 
-    if not user.reset_token_expires or user.reset_token_expires < datetime.utcnow():
-        user.reset_token = None
-        user.reset_token_expires = None
-        db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OTP has expired"
-        )
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
 
-    totp = pyotp.TOTP(user.reset_token, interval=900)
+    secret = pyotp.random_base32()
+    otp = pyotp.TOTP(secret, interval=900).now()
+
+    user.otp_secret = secret
+    user.otp_expires = datetime.utcnow() + timedelta(minutes=15)
+    db.commit()
+
+    send_otp_email(email, otp)
+    return {"message": "OTP sent to email for password reset."}
+
+# ------------------------------------------
+# ✅ VERIFY OTP FOR PASSWORD RESET (Step 2)
+# ------------------------------------------
+@router.post("/verify-forgot-otp")
+async def verify_forgot_otp(email: str, otp: str, db: Session = Depends(get_db)):
+    """Verifies OTP for password reset."""
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not user.otp_secret:
+        raise HTTPException(status_code=400, detail="Invalid request.")
+
+    if user.otp_expires < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="OTP has expired. Request again.")
+
+    totp = pyotp.TOTP(user.otp_secret, interval=900)
     if not totp.verify(otp):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid OTP"
-        )
+        raise HTTPException(status_code=400, detail="Invalid OTP.")
 
-    return {"message": "OTP verified successfully"}
+    user.otp_secret = None
+    user.otp_expires = None
+    db.commit()
 
+    return {"message": "OTP verified. You can now reset your password."}
+
+# ------------------------------------------
+# ✅ RESET PASSWORD (Step 3)
+# ------------------------------------------
 @router.post("/reset-password")
-async def reset_password(employee_id: str, email: str, new_password: str, confirm_password: str, db: Session = Depends(get_db)):
+async def reset_password(email: str, new_password: str, confirm_password: str, db: Session = Depends(get_db)):
+    """Resets the user password after OTP verification."""
     if new_password != confirm_password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Passwords do not match"
-        )
+        raise HTTPException(status_code=400, detail="Passwords do not match.")
 
-    user = db.query(User).filter(
-        User.employee_id == employee_id, User.email == email
-    ).first()
+    if not re.match(PASSWORD_REGEX, new_password):
+        raise HTTPException(status_code=400, detail="Password must meet security requirements.")
 
-    if not user or not user.reset_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid reset request"
-        )
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid request.")
 
     user.hashed_password = get_password_hash(new_password)
-    user.reset_token = None
-    user.reset_token_expires = None
     db.commit()
 
-    return {"message": "Password reset successfully"}
+    return {"message": "Password reset successful. You can now log in."}
