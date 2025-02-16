@@ -5,9 +5,9 @@ import pytz
 from shapely.geometry import Point, Polygon
 from sqlalchemy.sql import func
 from fastapi.responses import StreamingResponse
-from ..utils.auth import get_current_user, check_within_geofence
-from ..database import get_db
-from ..models import Attendance, Campus, User
+from app.utils.auth import get_current_user, check_within_geofence
+from app.database import get_mongo_db
+from app.models import Attendance, Campus, User
 
 router = APIRouter()
 
@@ -19,7 +19,7 @@ async def punch_in(
     latitude: float,
     longitude: float,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_mongo_db)
 ):
     today = datetime.now(pytz.UTC).date()
 
@@ -64,7 +64,7 @@ async def punch_out(
     latitude: float,
     longitude: float,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_mongo_db)
 ):
     today = datetime.now(pytz.UTC).date()
 
@@ -115,7 +115,7 @@ async def track_user_location(
     latitude: float,
     longitude: float,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_mongo_db)
 ):
     today = datetime.now(pytz.UTC).date()
 
@@ -158,7 +158,7 @@ async def track_user_location(
 # ------------------------------------------
 @router.get("/attendance/daily-geofencing")
 async def daily_geofencing_data(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_mongo_db),
     current_user: User = Depends(get_current_user)
 ):
     """Fetches a list of employees who violated geofencing today."""
@@ -186,7 +186,7 @@ async def daily_geofencing_data(
 # ------------------------------------------
 @router.get("/attendance/weekly-geofencing")
 async def weekly_geofencing_report(
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_mongo_db),
     current_user: User = Depends(get_current_user)
 ):
     """Fetches a weekly report of geofencing violations."""
@@ -219,7 +219,7 @@ async def weekly_geofencing_report(
 async def issue_red_notice(
     user_id: int,
     reason: str,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_mongo_db),
     current_user: User = Depends(get_current_user)
 ):
     """Issues a red notice if a user repeatedly violates geofencing rules."""

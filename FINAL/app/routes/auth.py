@@ -4,15 +4,17 @@ from datetime import datetime, timedelta
 import pyotp
 import re
 from bson import ObjectId
-from ..utils.auth import (
+from app.utils.auth import (
     verify_password,
     get_password_hash,
     send_otp_email,
     create_access_token,
     assign_role
 )
-from ..database import get_mongo_db
-from ..models import UserSchema
+from app.database import get_mongo_db
+from app.schemas import UserSchema  
+from app.models import User  
+
 
 router = APIRouter()
 

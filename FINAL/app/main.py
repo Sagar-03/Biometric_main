@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routes import auth, profile, attendance, admin, super_admin, inventory_admin, sync
-from .database import get_mongo_db, EpushSessionLocal
+from app.routes import auth, profile, attendance, admin, super_admin, inventory_admin, sync
+from .database import get_mongo_db #EpushSessionLocal
 import asyncio
 
 app = FastAPI(title="DSEU Dashboard API")
@@ -39,13 +39,13 @@ async def startup_event():
         print(f"❌ MongoDB Connection Failed: {e}")
 
     # ✅ Ensure MySQL (EPUSH) connection
-    try:
-        session = EpushSessionLocal()
-        session.execute("SELECT 1")  # Quick connection test
-        print("✅ MySQL (EPUSH) Connected.")
-        session.close()
-    except Exception as e:
-        print(f"❌ MySQL (EPUSH) Connection Failed: {e}")
+    # try:
+    #     session = EpushSessionLocal()
+    #     session.execute("SELECT 1")  # Quick connection test
+    #     print("✅ MySQL (EPUSH) Connected.")
+    #     session.close()
+    # except Exception as e:
+    #     print(f"❌ MySQL (EPUSH) Connection Failed: {e}")
 
     print("🎯 All systems initialized.")
 

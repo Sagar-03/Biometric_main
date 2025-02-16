@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from datetime import datetime, timedelta
-from ..utils.auth import role_required, get_current_user
-from ..database import get_mongo_db
+from app.utils.auth import role_required, get_current_user
+from app.database import get_mongo_db
 
 router = APIRouter()
 

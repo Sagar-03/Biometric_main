@@ -17,7 +17,7 @@ import os
 #         db.close()
 
 # ✅ MongoDB Configuration (Primary Storage for Attendance & Inventory)
-MONGO_DB_URL = os.getenv("MONGO_DB_URL", "mongodb://localhost:27017")
+MONGO_DB_URL = os.getenv("MONGO_DB_URL", "mongodb+srv://dseu_admin:dseu_admin@dseu-cluster.plm4o.mongodb.net/?retryWrites=true&w=majority&appName=DSEU-Cluster")
 mongo_client = MongoClient(MONGO_DB_URL)
 mongo_db = mongo_client["dseu_main"]  # Use `dseu_main` database
 

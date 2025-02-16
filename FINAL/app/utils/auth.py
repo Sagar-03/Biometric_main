@@ -9,7 +9,7 @@ from fastapi import HTTPException, status, Depends
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from shapely.geometry import Point, Polygon
-from ..database import get_mongo_db
+from app.database import get_mongo_db
 from fastapi.security import OAuth2PasswordBearer
 
 # ✅ Security & JWT Configuration

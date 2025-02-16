@@ -3,8 +3,8 @@ from fastapi.responses import StreamingResponse
 from pymongo import MongoClient
 from bson import ObjectId
 from datetime import datetime, timedelta
-from ..utils.auth import role_required, get_current_user
-from ..database import get_mongo_db
+from app.utils.auth import role_required, get_current_user
+from app.database import get_mongo_db
 
 router = APIRouter()
 

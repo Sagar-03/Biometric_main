@@ -4,8 +4,8 @@ from bson import ObjectId
 from typing import Optional
 import shutil
 import os
-from ..utils.auth import get_current_user
-from ..database import get_mongo_db
+from app.utils.auth import get_current_user
+from app.database import get_mongo_db
 
 router = APIRouter()
 

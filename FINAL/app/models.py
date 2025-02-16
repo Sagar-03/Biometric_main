@@ -1,7 +1,7 @@
 from datetime import datetime
 from bson import ObjectId
 from pymongo import IndexModel, ASCENDING
-from ..database import get_mongo_db
+from app.database import get_mongo_db
 
 # ✅ Get MongoDB Instance
 db = get_mongo_db()
