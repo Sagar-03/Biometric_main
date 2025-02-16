@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Attendance Management</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f9;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    .container {
+      background-color: #fff;
+      padding: 20px 30px;
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      width: 100%;
+      max-width: 800px;
+    }
+
+    .container h2 {
+      margin-bottom: 20px;
+      text-align: center;
+      color: #333;
+    }
+
+    .section {
+      margin-bottom: 20px;
+    }
+
+    .section h3 {
+      margin-bottom: 10px;
+      color: #444;
+      font-size: 18px;
+    }
+
+    .button {
+      display: inline-block;
+      padding: 10px 20px;
+      margin-right: 10px;
+      margin-bottom: 10px;
+      font-size: 14px;
+      background-color: #007bff;
+      color: #fff;
+      text-align: center;
+      text-decoration: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    .button:hover {
+      background-color: #0056b3;
+    }
+
+    .info {
+      background-color: #f8f9fa;
+      border: 1px solid #ddd;
+      padding: 10px;
+      margin-bottom: 10px;
+      border-radius: 5px;
+      font-size: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+
+    table, th, td {
+      border: 1px solid #ddd;
+    }
+
+    th, td {
+      padding: 8px;
+      text-align: center;
+    }
+
+    th {
+      background-color: #f4f4f4;
+      font-weight: bold;
+    }
+
+    .download-buttons {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Attendance Management</h2>
+
+    <!-- Punch-in/Punch-out Section -->
+    <div class="section">
+      <h3>Punch-in/Punch-out</h3>
+      <div>
+        <button class="button">Punch In</button>
+        <button class="button">Punch Out</button>
+      </div>
+      <div class="info">Punch-in Time: Not punched in yet</div>
+      <div class="info">Punch-out Time: Not punched out yet</div>
+    </div>
+
+    <!-- Timers -->
+    <div class="section">
+      <h3>Timers</h3>
+      <div class="info">Daily Timer: 0/8 hours</div>
+      <div class="info">Weekly Timer: 0/40 hours</div>
+    </div>
+
+    <!-- Attendance Status -->
+    <div class="section">
+      <h3>Attendance Status</h3>
+      <div class="info">Status: Absent</div>
+    </div>
+
+    <!-- Weekly and Monthly Reports -->
+    <div class="section">
+      <h3>Weekly/Monthly Attendance Reports</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Status</th>
+            <th>Punch-in</th>
+            <th>Punch-out</th>
+            <th>Hours Worked</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Jan 13, 2025</td>
+            <td>Present</td>
+            <td>9:00 AM</td>
+            <td>5:00 PM</td>
+            <td>8 hrs</td>
+          </tr>
+          <tr>
+            <td>Jan 14, 2025</td>
+            <td>Absent</td>
+            <td>-</td>
+            <td>-</td>
+            <td>-</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Download Report Options -->
+    <div class="section">
+      <h3>Download Reports</h3>
+      <div class="download-buttons">
+        <a href="#" class="button">Today</a>
+        <a href="#" class="button">Yesterday</a>
+        <a href="#" class="button">Previous Week</a>
+        <a href="#" class="button">Previous Month</a>
+        <a href="#" class="button">Custom Range</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
